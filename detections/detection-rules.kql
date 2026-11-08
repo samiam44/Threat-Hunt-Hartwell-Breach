@@ -1,0 +1,28 @@
+// Detection rules written from the Hartwell Breach hunt
+
+// R1. Web server or www-data spawning shells and tools (HartwellSysmon_CL)
+HartwellSysmon_CL
+| where EventID == 1
+| where ParentImage has_any ("apache2", "php", "httpd") or User == "www-data"
+| where Image has_any ("/sh", "/dash", "/bash", "curl", "wget", "crontab", "mysql", "base64", "systemctl")
+| project OriginalTime, User, ParentImage, Image, CommandLine
+
+// R2. PHP2Shell exploitation pattern (HartwellApacheError_CL)
+HartwellApacheError_CL
+| where Message has "PHP Request Startup" and Message has "Session"
+| summarize Warnings=count(), First=min(OriginalTime) by ClientIP, bin(todatetime(OriginalTime), 1h)
+| where Warnings >= 5
+
+// R3. Service-account persistence (HartwellSysmon_CL)
+HartwellSysmon_CL
+| where EventID == 1 and User in ("www-data", "nobody", "mysql")
+| where CommandLine has_any ("crontab", "/dev/shm", "/tmp/.", "authorized_keys")
+| project OriginalTime, User, CommandLine
+
+// R4. Attempt to stop monitoring (HartwellSysmon_CL)
+HartwellSysmon_CL
+| where EventID == 1 and CommandLine has "systemctl"
+| where CommandLine has_any ("stop", "disable", "mask")
+| where CommandLine has_any ("sysmon", "auditd", "Splunk", "wazuh", "ossec")
+| project OriginalTime, User, CommandLine
+

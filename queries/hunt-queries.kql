@@ -1,0 +1,77 @@
+// Hartwell Breach (PHP2Shell) threat hunt, workspace LAW-HuntPractice
+// Add after each table name unless a narrower window is shown:
+// | where todatetime(OriginalTime) between (datetime(2026-10-23T04:00:00Z) .. datetime(2026-10-23T16:00:00Z))
+
+// A1. Top web clients, staff excluded
+HartwellApache_CL
+| where ClientIP !in ("192.168.1.50", "192.168.1.80")
+| summarize Requests=count(), First=min(todatetime(OriginalTime)), Last=max(todatetime(OriginalTime)) by ClientIP
+| sort by Requests desc
+
+// A2. Attacker tools by user agent
+HartwellApache_CL
+| where ClientIP == "192.168.1.100"
+| extend Row = tostring(pack_all())
+| extend Tool = case(Row has "Nmap", "Nmap", Row has "python-requests", "python-requests", Row has "curl", "curl", "Other")
+| summarize Requests=count(), FirstSeen=min(todatetime(OriginalTime)) by Tool
+
+// A3. Error-log messages from the attacker
+HartwellApacheError_CL
+| where ClientIP == "192.168.1.100"
+| summarize Count=count(), First=min(todatetime(OriginalTime)), Last=max(todatetime(OriginalTime)) by Module, Message
+| sort by Count desc
+
+// A4. Exploit request signature
+HartwellHTTPEnriched_CL
+| where id_orig_h == "192.168.1.100"
+| summarize Requests=count(), First=min(todatetime(OriginalTime)) by method, content_type, user_agent
+
+// A5. Decoded web-shell commands (Base64, then ROT13)
+HartwellHTTPEnriched_CL
+| where isnotempty(x_hmg_debug_raw)
+| extend A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+         B = "NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm"
+| extend Decoded = translate(A, B, base64_decode_tostring(tostring(x_hmg_debug_raw)))
+| project OriginalTime, x_hmg_debug_raw, Decoded, x_hmg_debug_decoded
+| sort by OriginalTime asc
+
+// A6. Processes with a web-server parent
+HartwellSysmon_CL
+| where EventID == 1 and ParentImage has_any ("apache2", "php", "httpd")
+| summarize Count=count(), First=min(todatetime(OriginalTime)), Cmds=make_set(CommandLine, 20) by User, ParentImage
+
+// A7. Full www-data command timeline
+HartwellSysmon_CL
+| where EventID == 1 and (User == "www-data" or CommandLine has_any ("crontab -u www-data", "health-check.php"))
+| project OriginalTime, User, CommandLine
+| sort by OriginalTime asc
+
+// A8. Event volume per table
+union withsource=T HartwellSysmon_CL, HartwellAudit_CL, HartwellApache_CL, HartwellApacheError_CL, HartwellHTTPEnriched_CL, HartwellAuth_CL
+| where todatetime(OriginalTime) between (datetime(2026-10-23T12:00:00Z) .. datetime(2026-10-23T15:00:00Z))
+| summarize Events=count() by T, Bucket=bin(todatetime(OriginalTime), 5m)
+| render timechart
+
+// A9. debian SSH sessions and attacker IP in auth
+HartwellAuth_CL
+| where Message has "debian" or Message has "192.168.1.100"
+| project OriginalTime, Process, Message
+| sort by OriginalTime asc
+
+// A10. Lateral movement sweep
+HartwellSysmon_CL
+| where User in ("www-data", "debian")
+| extend OtherHosts = extract_all(@"(192\.168\.1\.\d{1,3})", strcat(CommandLine, " ", DestinationIp))
+| mv-apply H = OtherHosts to typeof(string) on (where H !in ("192.168.1.120", "192.168.1.100") | summarize Targets=make_set(H))
+| where array_length(Targets) > 0 or (EventID == 1 and CommandLine has_any ("ssh ", "scp ", "nmap", " nc ", "ncat", "socat", "mysql -h"))
+| project OriginalTime, User, CommandLine, Targets
+
+// A11. Syslog service-state check (coverage test)
+HartwellSyslog_CL
+| summarize Rows=count(), First=min(todatetime(OriginalTime)), Last=max(todatetime(OriginalTime))
+
+// A12. Scanner noise
+HartwellSysmon_CL
+| where EventID == 1 and User == "root" and CommandLine has "wp-config.php.bak"
+| project OriginalTime, CommandLine
+
