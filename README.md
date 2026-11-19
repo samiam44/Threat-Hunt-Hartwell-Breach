@@ -1,12 +1,12 @@
 # PHP2Shell: The Hartwell Breach
 
-**Threat hunt, Log(N) Pacific Cyber Range** · Analyst: John Samudio · Result: 18 of 18 flags
+**Threat hunt, Log(N) Pacific Cyber Range** · Analyst: John Samudio · Result: 18 of 18 flags · Debrief rating: Exceptional · Report v1.1 (revised after debrief)
 
 📄 **[Read the full report (PDF)](Hartwell_Breach_Threat_Hunt_Report.pdf)**
 
 ## Summary
 
-An attacker exploited PHP2Shell (CVE-2026-109618 / CVE-2026-109619), a critical unauthenticated remote code execution flaw in PHP, on a public WordPress server belonging to the fictional Hartwell Medical Group. They planted a web shell, stole the database credentials and WordPress password hashes, tried and failed to disable the monitoring stack, and installed cron persistence for an in-memory implant. When an administrator cleaned up the web shell, the attacker re-exploited the same flaw within 57 seconds and restored persistence.
+An attacker exploited PHP2Shell (CVE-2026-109618 / CVE-2026-109619), a critical unauthenticated remote code execution flaw in PHP, on a public WordPress server belonging to the fictional Hartwell Medical Group. Across three visits they planted a web shell, accessed and staged the database credentials and WordPress password hashes for removal (exfiltration probable, not proven), tried to disable the monitoring stack (Sysmon and auditd kept recording), installed cron persistence for an in-memory implant, and backdoored a core WordPress file. When an administrator cleaned up the web shell, the attacker re-exploited the same flaw within 57 seconds and restored persistence; the cleanup also missed the WordPress backdoor.
 
 | | |
 | --- | --- |
@@ -18,12 +18,13 @@ An attacker exploited PHP2Shell (CVE-2026-109618 / CVE-2026-109619), a critical 
 ## Attack chain
 
 1. **Recon:** Nmap scan, 1,419 requests from 192.168.1.100.
-2. **Initial access:** crafted `POST` `multipart/form-data` requests abusing `session.upload_progress` (PHP2Shell).
+1. **Visit 1 (04:33 UTC, before Sysmon started):** first exploitation; implant, crontab and a backdoor in `wp-includes/version.php`, visible only in the audit log.
+2. **Visit 2, initial access:** crafted `POST` `multipart/form-data` requests abusing `session.upload_progress` (PHP2Shell).
 3. **Web shell:** `health-check.php`, triggered by an `X-HMG-Debug` header with commands encoded ROT13 then Base64.
 4. **Discovery:** host, network (`ss`, `ip neigh`, `ip addr`) and security-tool enumeration.
-5. **Credential access:** `wp-config.php` read, `wp_users.user_pass` hashes dumped, data returned through the web shell.
-6. **Defense evasion (failed):** `systemctl stop` of sysmon, auditd and SplunkForwarder as www-data, blocked by missing privileges.
-7. **Persistence:** cron job running `/dev/shm/.cache-helper` every 5 minutes, reinstalled after cleanup.
+5. **Credential access:** `wp-config.php` read, `wp_users.user_pass` hashes dumped and Base64-encoded for removal. Exfiltration through the web shell is probable, not proven: response bodies are not logged.
+6. **Defense evasion (failed):** `systemctl stop` of sysmon, auditd and SplunkForwarder as www-data, blocked for Sysmon and auditd by missing privileges; the Splunk forwarder's status is not recorded.
+7. **Visit 3 and persistence:** cron job running `/dev/shm/.cache-helper` every 5 minutes, reinstalled after the cleanup by re-exploiting the same flaw.
 
 ## MITRE ATT&CK
 
@@ -59,6 +60,14 @@ An attacker exploited PHP2Shell (CVE-2026-109618 / CVE-2026-109619), a critical 
 - **Least privilege contained the damage.** The attacker could not stop monitoring because www-data lacked the rights.
 - **Name the gaps.** A clock offset in one log, a collection gap and a short syslog window were documented rather than guessed around.
 
+## What the debrief taught me (v1.1)
+
+The range creator's debrief rated the report Exceptional and flagged three things I fixed in v1.1:
+
+- **I missed the first visit.** I used the audit log only for event counts, so I missed an exploitation run at 04:33 UTC that happened before Sysmon started, including a WordPress backdoor the cleanup never removed. Next time I read every table for actions before fixing where the timeline starts.
+- **Some claims went past the data.** My summary stated exfiltration, a fully failed evasion and no lateral movement more firmly than the evidence allowed. A finding's confidence now carries into the summary, headings and tables.
+- **Two appendix queries did not run as printed** (wrong column name). Queries now come from the run that produced the result and get re-run before publishing.
+
 ---
 
-*Scenario and data from the Log(N) Pacific Cyber Range. Hartwell Medical Group is fictional. Report written to the Pacific Watch reporting standard (PEAK / TaHiTI). AI assistance (Claude) was used for query drafting and report structure; all findings were verified against the logs.*
+*Scenario and data from the Log(N) Pacific Cyber Range. Hartwell Medical Group is fictional. Report written to the Pacific Watch reporting standard (PEAK / TaHiTI). AI assistance (Claude) was used for query drafting and report structure; v1.0 findings were verified against the logs; first-visit details added in v1.1 come from the range debrief.*

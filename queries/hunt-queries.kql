@@ -1,16 +1,17 @@
-// Hartwell Breach (PHP2Shell) threat hunt, workspace LAW-HuntPractice
+// Hartwell Breach (PHP2Shell) threat hunt, workspace LAW-HuntPractice (v1.1)
 // Add after each table name unless a narrower window is shown:
 // | where todatetime(OriginalTime) between (datetime(2026-10-23T04:00:00Z) .. datetime(2026-10-23T16:00:00Z))
+// Note: HartwellApache_CL uses SourceIP; HartwellApacheError_CL uses ClientIP.
 
 // A1. Top web clients, staff excluded
 HartwellApache_CL
-| where ClientIP !in ("192.168.1.50", "192.168.1.80")
-| summarize Requests=count(), First=min(todatetime(OriginalTime)), Last=max(todatetime(OriginalTime)) by ClientIP
+| where SourceIP !in ("192.168.1.50", "192.168.1.80")
+| summarize Requests=count(), First=min(todatetime(OriginalTime)), Last=max(todatetime(OriginalTime)) by SourceIP
 | sort by Requests desc
 
 // A2. Attacker tools by user agent
 HartwellApache_CL
-| where ClientIP == "192.168.1.100"
+| where SourceIP == "192.168.1.100"
 | extend Row = tostring(pack_all())
 | extend Tool = case(Row has "Nmap", "Nmap", Row has "python-requests", "python-requests", Row has "curl", "curl", "Other")
 | summarize Requests=count(), FirstSeen=min(todatetime(OriginalTime)) by Tool
